@@ -1,9 +1,13 @@
-"""FastAPI application for the ORIGIN Tours & Travels website."""
+"""Standalone, reorganized copy of the ORIGIN API for comparison. (not anymore)
+
+This file is not imported by main.py and does not start the server or connect
+to PostgreSQL by itself.
+"""
 
 import os
 import secrets
 from contextlib import asynccontextmanager
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 import psycopg
 from fastapi import Depends, FastAPI, Header, HTTPException, status
@@ -16,7 +20,12 @@ from database import get_db, initialize_database
 
 
 TourCategory = Literal["domestic", "international", "umrah"]
+DatabaseConnection = Annotated[psycopg.Connection, Depends(get_db)]
 
+
+# ---------------------------------------------------------------------------
+# Request data
+# ---------------------------------------------------------------------------
 
 class ContactForm(BaseModel):
     name: str = Field(min_length=2, max_length=120)
@@ -55,7 +64,11 @@ class DestinationUpdate(BaseModel):
 
 
 class TourCreate(BaseModel):
-    slug: str = Field(min_length=2, max_length=120, pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+    slug: str = Field(
+        min_length=2,
+        max_length=120,
+        pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$",
+    )
     category: TourCategory
     name: str = Field(min_length=2, max_length=120)
     region: str = Field(default="", max_length=120)
@@ -70,7 +83,12 @@ class TourCreate(BaseModel):
 
 
 class TourUpdate(BaseModel):
-    slug: str | None = Field(default=None, min_length=2, max_length=120, pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+    slug: str | None = Field(
+        default=None,
+        min_length=2,
+        max_length=120,
+        pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$",
+    )
     category: TourCategory | None = None
     name: str | None = Field(default=None, min_length=2, max_length=120)
     region: str | None = Field(default=None, max_length=120)
@@ -84,6 +102,58 @@ class TourUpdate(BaseModel):
     sort_order: int | None = Field(default=None, ge=0)
 
 
+# ---------------------------------------------------------------------------
+# Shared database operations
+# ---------------------------------------------------------------------------
+
+def insert_row(
+    connection: psycopg.Connection,
+    table: str,
+    values: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Insert one row; callers decide when to commit the transaction."""
+    columns = list(values)
+    column_names = sql.SQL(", ").join(
+        sql.Identifier(column) for column in columns
+    )
+    placeholders = sql.SQL(", ").join(
+        sql.SQL("%s") for _ in columns
+    )
+    query = sql.SQL("INSERT INTO {} ({}) VALUES ({}) RETURNING *").format(
+        sql.Identifier(table),
+        column_names,
+        placeholders,
+    )
+
+    with connection.cursor() as cursor:
+        cursor.execute(query, tuple(values[column] for column in columns))
+        return cursor.fetchone()
+
+
+def update_row(
+    connection: psycopg.Connection,
+    table: str,
+    record_id: int,
+    values: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Update provided columns; callers handle missing rows and commit."""
+    assignments = sql.SQL(", ").join(
+        sql.SQL("{} = %s").format(sql.Identifier(column))
+        for column in values
+    )
+    query = sql.SQL(
+        "UPDATE {} SET {}, updated_at = NOW() "
+        "WHERE id = %s RETURNING *"
+    ).format(sql.Identifier(table), assignments)
+
+    with connection.cursor() as cursor:
+        cursor.execute(query, (*values.values(), record_id))
+        return cursor.fetchone()
+
+
+# ---------------------------------------------------------------------------
+# Authentication and application setup
+# ---------------------------------------------------------------------------
 
 def require_admin_key(
     x_admin_key: Annotated[str | None, Header()] = None,
@@ -96,7 +166,10 @@ def require_admin_key(
             detail="Admin API is disabled. Set ADMIN_API_KEY in the .env file.",
         )
 
-    if not x_admin_key or not secrets.compare_digest(x_admin_key.encode("utf-8"), expected_key.encode("utf-8")):
+    if not x_admin_key or not secrets.compare_digest(
+        x_admin_key.encode("utf-8"),
+        expected_key.encode("utf-8"),
+    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="A valid X-Admin-Key header is required.",
@@ -105,7 +178,6 @@ def require_admin_key(
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    # Database work happens at startup, not when main.py is imported.
     initialize_database()
     yield
 
@@ -137,19 +209,23 @@ def api_home():
 
 
 @app.get("/api/health", tags=["Health"])
-def database_health(connection: Annotated[psycopg.Connection, Depends(get_db)]):
+def database_health(connection: DatabaseConnection):
     connection.execute("SELECT 1")
     return {"status": "ok", "database": "connected"}
 
 
-# -----------------------------------------------------------------------------
-# Public contact form; private enquiry management requires the admin key.
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Contact enquiries
+# ---------------------------------------------------------------------------
 
-@app.post("/api/contact", status_code=status.HTTP_201_CREATED, tags=["Contact"])
+@app.post(
+    "/api/contact",
+    status_code=status.HTTP_201_CREATED,
+    tags=["Contact"],
+)
 def submit_contact_message(
     data: ContactForm,
-    connection: Annotated[psycopg.Connection, Depends(get_db)],
+    connection: DatabaseConnection,
 ):
     with connection.cursor() as cursor:
         cursor.execute(
@@ -169,10 +245,12 @@ def submit_contact_message(
     }
 
 
-@app.get("/api/contact", tags=["Contact"], dependencies=[Depends(require_admin_key)])
-def get_contact_messages(
-    connection: Annotated[psycopg.Connection, Depends(get_db)],
-):
+@app.get(
+    "/api/contact",
+    tags=["Contact"],
+    dependencies=[Depends(require_admin_key)],
+)
+def get_contact_messages(connection: DatabaseConnection):
     with connection.cursor() as cursor:
         cursor.execute(
             """
@@ -192,7 +270,7 @@ def get_contact_messages(
 )
 def delete_contact_message(
     contact_id: int,
-    connection: Annotated[psycopg.Connection, Depends(get_db)],
+    connection: DatabaseConnection,
 ):
     with connection.cursor() as cursor:
         cursor.execute(
@@ -208,38 +286,31 @@ def delete_contact_message(
     return {"message": "Contact message deleted", "id": deleted_message["id"]}
 
 
-# -----------------------------------------------------------------------------
-# Public tour listing + protected tour management.
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Tours
+# ---------------------------------------------------------------------------
 
 @app.get("/api/tours", tags=["Tours"])
 def get_tours(
-    connection: Annotated[psycopg.Connection, Depends(get_db)],
+    connection: DatabaseConnection,
     category: TourCategory | None = None,
 ):
+    query = """
+        SELECT id, slug, category, name, region, duration, price,
+               image, description, features, cta_label, is_featured,
+               sort_order
+        FROM tours
+    """
+    parameters: tuple[str, ...] = ()
+
+    if category is None:
+        query += " ORDER BY category, sort_order, id"
+    else:
+        query += " WHERE category = %s ORDER BY sort_order, id"
+        parameters = (category,)
+
     with connection.cursor() as cursor:
-        if category is None:
-            cursor.execute(
-                """
-                SELECT id, slug, category, name, region, duration, price,
-                       image, description, features, cta_label, is_featured,
-                       sort_order
-                FROM tours
-                ORDER BY category, sort_order, id
-                """
-            )
-        else:
-            cursor.execute(
-                """
-                SELECT id, slug, category, name, region, duration, price,
-                       image, description, features, cta_label, is_featured,
-                       sort_order
-                FROM tours
-                WHERE category = %s
-                ORDER BY sort_order, id
-                """,
-                (category,),
-            )
+        cursor.execute(query, parameters)
         tours = cursor.fetchall()
     return {"tours": tours}
 
@@ -250,28 +321,16 @@ def get_tours(
     tags=["Tours"],
     dependencies=[Depends(require_admin_key)],
 )
-def create_tour(
-    tour: TourCreate,
-    connection: Annotated[psycopg.Connection, Depends(get_db)],
-):
-    values = tour.model_dump()
-    columns = list(values)
-    column_sql = sql.SQL(", ").join(sql.Identifier(column) for column in columns)
-    placeholders = sql.SQL(", ").join(sql.SQL("%s") for _ in columns)
-
+def create_tour(tour: TourCreate, connection: DatabaseConnection):
     try:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                sql.SQL("INSERT INTO tours ({}) VALUES ({}) RETURNING *").format(
-                    column_sql, placeholders
-                ),
-                tuple(values[column] for column in columns),
-            )
-            created_tour = cursor.fetchone()
+        created_tour = insert_row(connection, "tours", tour.model_dump())
         connection.commit()
     except UniqueViolation:
         connection.rollback()
-        raise HTTPException(status_code=409, detail="A tour with this slug already exists")
+        raise HTTPException(
+            status_code=409,
+            detail="A tour with this slug already exists",
+        )
 
     return {"message": "Tour created", "tour": created_tour}
 
@@ -284,30 +343,23 @@ def create_tour(
 def update_tour(
     tour_id: int,
     updates: TourUpdate,
-    connection: Annotated[psycopg.Connection, Depends(get_db)],
+    connection: DatabaseConnection,
 ):
-    update_values = updates.model_dump(exclude_unset=True, exclude_none=True)
-    if not update_values:
+    values = updates.model_dump(exclude_unset=True, exclude_none=True)
+    if not values:
         raise HTTPException(status_code=400, detail="No updates were provided")
 
-    assignments = sql.SQL(", ").join(
-        sql.SQL("{} = %s").format(sql.Identifier(column))
-        for column in update_values
-    )
-
     try:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                sql.SQL("UPDATE tours SET {}, updated_at = NOW() WHERE id = %s RETURNING *").format(assignments),
-                (*update_values.values(), tour_id),
-            )
-            updated_tour = cursor.fetchone()
+        updated_tour = update_row(connection, "tours", tour_id, values)
         if updated_tour is None:
             raise HTTPException(status_code=404, detail="Tour not found")
         connection.commit()
     except UniqueViolation:
         connection.rollback()
-        raise HTTPException(status_code=409, detail="A tour with this slug already exists")
+        raise HTTPException(
+            status_code=409,
+            detail="A tour with this slug already exists",
+        )
 
     return {"message": "Tour updated", "tour": updated_tour}
 
@@ -317,27 +369,27 @@ def update_tour(
     tags=["Tours"],
     dependencies=[Depends(require_admin_key)],
 )
-def delete_tour(
-    tour_id: int,
-    connection: Annotated[psycopg.Connection, Depends(get_db)],
-):
+def delete_tour(tour_id: int, connection: DatabaseConnection):
     with connection.cursor() as cursor:
-        cursor.execute("DELETE FROM tours WHERE id = %s RETURNING id, name", (tour_id,))
+        cursor.execute(
+            "DELETE FROM tours WHERE id = %s RETURNING id, name",
+            (tour_id,),
+        )
         deleted_tour = cursor.fetchone()
+
     if deleted_tour is None:
         raise HTTPException(status_code=404, detail="Tour not found")
+
     connection.commit()
     return {"message": "Tour deleted", "tour": deleted_tour}
 
 
-# -----------------------------------------------------------------------------
-# Public destination listing + protected destination management.
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Destinations
+# ---------------------------------------------------------------------------
 
 @app.get("/api/destinations", tags=["Destinations"])
-def get_destinations(
-    connection: Annotated[psycopg.Connection, Depends(get_db)],
-):
+def get_destinations(connection: DatabaseConnection):
     with connection.cursor() as cursor:
         cursor.execute(
             """
@@ -358,21 +410,13 @@ def get_destinations(
 )
 def create_destination(
     destination: DestinationCreate,
-    connection: Annotated[psycopg.Connection, Depends(get_db)],
+    connection: DatabaseConnection,
 ):
-    values = destination.model_dump()
-    columns = list(values)
-    column_sql = sql.SQL(", ").join(sql.Identifier(column) for column in columns)
-    placeholders = sql.SQL(", ").join(sql.SQL("%s") for _ in columns)
-
-    with connection.cursor() as cursor:
-        cursor.execute(
-            sql.SQL("INSERT INTO destinations ({}) VALUES ({}) RETURNING *").format(
-                column_sql, placeholders
-            ),
-            tuple(values[column] for column in columns),
-        )
-        created_destination = cursor.fetchone()
+    created_destination = insert_row(
+        connection,
+        "destinations",
+        destination.model_dump(),
+    )
     connection.commit()
     return {"message": "Destination created", "destination": created_destination}
 
@@ -385,32 +429,29 @@ def create_destination(
 def update_destination(
     destination_id: int,
     updates: DestinationUpdate,
-    connection: Annotated[psycopg.Connection, Depends(get_db)],
+    connection: DatabaseConnection,
 ):
-    update_values = updates.model_dump(exclude_unset=True, exclude_none=True)
-    if not update_values:
-        raise HTTPException(status_code=400, detail="No valid updates were provided")
-
-    assignments = sql.SQL(", ").join(
-        sql.SQL("{} = %s").format(sql.Identifier(column))
-        for column in update_values
-    )
-
-    with connection.cursor() as cursor:
-        cursor.execute(
-            sql.SQL(
-                "UPDATE destinations SET {}, updated_at = NOW() "
-                "WHERE id = %s RETURNING *"
-            ).format(assignments),
-            (*update_values.values(), destination_id),
+    values = updates.model_dump(exclude_unset=True, exclude_none=True)
+    if not values:
+        raise HTTPException(
+            status_code=400,
+            detail="No valid updates were provided",
         )
-        updated_destination = cursor.fetchone()
 
+    updated_destination = update_row(
+        connection,
+        "destinations",
+        destination_id,
+        values,
+    )
     if updated_destination is None:
         raise HTTPException(status_code=404, detail="Destination not found")
 
     connection.commit()
-    return {"message": "Destination updated", "destination": updated_destination}
+    return {
+        "message": "Destination updated",
+        "destination": updated_destination,
+    }
 
 
 @app.delete(
@@ -420,7 +461,7 @@ def update_destination(
 )
 def delete_destination(
     destination_id: int,
-    connection: Annotated[psycopg.Connection, Depends(get_db)],
+    connection: DatabaseConnection,
 ):
     with connection.cursor() as cursor:
         cursor.execute(
@@ -435,6 +476,10 @@ def delete_destination(
     connection.commit()
     return {"message": "Destination deleted", "destination": deleted_destination}
 
+
+# ---------------------------------------------------------------------------
+# Services
+# ---------------------------------------------------------------------------
 
 @app.get("/api/services", tags=["Services"])
 def get_services():
