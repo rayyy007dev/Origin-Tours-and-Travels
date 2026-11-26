@@ -112,7 +112,9 @@ Admin-key-protected routes:
 | POST / PUT / DELETE | `/api/tours` and `/api/tours/{tour_id}` | Manage tours |
 | POST / PUT / DELETE | `/api/destinations` and `/api/destinations/{destination_id}` | Manage destinations |
 
-For protected endpoints in `/docs`, provide the `X-Admin-Key` header using the value of `ADMIN_API_KEY` from `.env`. Never put this key in frontend JavaScript. A future admin dashboard must call the API through a secure server-side authentication/session design; this simple key is suitable only for local development and controlled testing.
+For protected endpoints in `/docs`, provide the `X-Admin-Key` header using the value of `ADMIN_API_KEY` from `.env`.
+
+For local/trusted testing, open the website at `http://127.0.0.1:8000/` and use the **Admin** link in the navigation, or go directly to `http://127.0.0.1:8000/admin-dashboard.html`. Choose **Open tour form** to create a tour, then enter the key from `.env`. The form does not hardcode the key or save it to application storage; it sends it from the browser in the `X-Admin-Key` header while the page is open. This dashboard has no login and is not production-ready. Do not expose this shared-key browser workflow with a production key or on a public deployment. Production admin tools require proper server-side authentication and session handling, HTTPS, and other deployment protections.
 
 ## Important notes
 

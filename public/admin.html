@@ -1,0 +1,517 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta
+            name="description"
+            content="Local admin form for adding ORIGIN tour packages."
+        />
+        <title>Add a Tour | ORIGIN Tours &amp; Travels</title>
+        <style>
+            :root {
+                color-scheme: light;
+                font-family: Arial, sans-serif;
+                color: #17243a;
+                background: #f3f6fa;
+            }
+
+            * {
+                box-sizing: border-box;
+            }
+
+            body {
+                margin: 0;
+                padding: 40px 18px;
+            }
+
+            main {
+                width: min(760px, 100%);
+                margin: 0 auto;
+                padding: 32px;
+                border: 1px solid #dce4ef;
+                border-radius: 16px;
+                background: #fff;
+                box-shadow: 0 16px 40px rgb(23 36 58 / 8%);
+            }
+
+            h1,
+            h2,
+            p {
+                margin-top: 0;
+            }
+
+            .back-link {
+                display: inline-block;
+                margin-bottom: 20px;
+                color: #214f80;
+                font-weight: 700;
+                text-decoration: none;
+            }
+
+            .back-link:hover,
+            .back-link:focus-visible {
+                text-decoration: underline;
+            }
+
+            h1 {
+                margin-bottom: 8px;
+                font-size: clamp(1.7rem, 4vw, 2.2rem);
+            }
+
+            h2 {
+                margin-bottom: 16px;
+                font-size: 1.15rem;
+            }
+
+            .intro,
+            .security-note,
+            .help-text {
+                color: #53647b;
+                line-height: 1.55;
+            }
+
+            .security-note {
+                margin: 22px 0;
+                padding: 14px 16px;
+                border-left: 4px solid #c47a12;
+                border-radius: 6px;
+                background: #fff8eb;
+                color: #62400e;
+            }
+
+            section {
+                margin-top: 26px;
+                padding-top: 24px;
+                border-top: 1px solid #e5eaf1;
+            }
+
+            .field-grid {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 16px;
+            }
+
+            .field {
+                display: grid;
+                gap: 7px;
+            }
+
+            .field.full-width {
+                grid-column: 1 / -1;
+            }
+
+            label {
+                font-size: 0.92rem;
+                font-weight: 700;
+            }
+
+            input,
+            select,
+            textarea {
+                width: 100%;
+                min-height: 44px;
+                padding: 10px 12px;
+                border: 1px solid #c7d1df;
+                border-radius: 7px;
+                background: #fff;
+                color: inherit;
+                font: inherit;
+            }
+
+            textarea {
+                min-height: 120px;
+                resize: vertical;
+            }
+
+            input:focus,
+            select:focus,
+            textarea:focus {
+                border-color: #356da8;
+                outline: 3px solid rgb(53 109 168 / 16%);
+            }
+
+            .help-text {
+                margin: 0;
+                font-size: 0.85rem;
+            }
+
+            .checkbox-field {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                min-height: 44px;
+            }
+
+            .checkbox-field input {
+                width: 18px;
+                min-height: 18px;
+                height: 18px;
+                margin: 0;
+            }
+
+            .actions {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                margin-top: 22px;
+            }
+
+            button {
+                min-height: 44px;
+                padding: 10px 18px;
+                border: 0;
+                border-radius: 7px;
+                font: inherit;
+                font-weight: 700;
+                cursor: pointer;
+            }
+
+            button[type="submit"] {
+                background: #214f80;
+                color: #fff;
+            }
+
+            button[type="reset"] {
+                background: #e9eef5;
+                color: #263c58;
+            }
+
+            button:disabled {
+                cursor: wait;
+                opacity: 0.65;
+            }
+
+            #form-status {
+                min-height: 1.5em;
+                margin: 18px 0 0;
+                line-height: 1.5;
+            }
+
+            #form-status[data-state="success"] {
+                color: #17643b;
+            }
+
+            #form-status[data-state="error"] {
+                color: #a52c2c;
+            }
+
+            @media (max-width: 560px) {
+                body {
+                    padding: 18px 10px;
+                }
+
+                main {
+                    padding: 22px 18px;
+                }
+
+                .field-grid {
+                    grid-template-columns: 1fr;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <main>
+            <a class="back-link" href="/admin-dashboard.html">&larr; Admin dashboard</a>
+            <h1>Add a tour package</h1>
+            <p class="intro">
+                Add a package to the tours database. The public tour pages will
+                display it after it has been created.
+            </p>
+
+            <p class="security-note">
+                Local/trusted use only. The admin key is sent from this browser
+                to the API and is kept only while this page is open. Do not use
+                this shared-key form on a public production deployment.
+            </p>
+
+            <section aria-labelledby="access-heading">
+                <h2 id="access-heading">Admin access</h2>
+                <div class="field">
+                    <label for="admin-key">Admin API key</label>
+                    <input
+                        id="admin-key"
+                        name="admin-key"
+                        type="password"
+                        autocomplete="off"
+                        spellcheck="false"
+                        required
+                    />
+                    <p class="help-text">
+                        Enter the value of <code>ADMIN_API_KEY</code> from your
+                        local <code>.env</code> file.
+                    </p>
+                </div>
+            </section>
+
+            <section aria-labelledby="tour-heading">
+                <h2 id="tour-heading">Tour details</h2>
+                <form id="tour-form">
+                    <div class="field-grid">
+                        <div class="field">
+                            <label for="slug">URL slug</label>
+                            <input
+                                id="slug"
+                                name="slug"
+                                type="text"
+                                minlength="2"
+                                maxlength="120"
+                                pattern="[a-z0-9]+(?:-[a-z0-9]+)*"
+                                title="Use lowercase letters, numbers, and single hyphens."
+                                placeholder="kashmir-summer-tour"
+                                required
+                            />
+                        </div>
+
+                        <div class="field">
+                            <label for="category">Category</label>
+                            <select id="category" name="category" required>
+                                <option value="">Choose a category</option>
+                                <option value="domestic">Domestic</option>
+                                <option value="international">International</option>
+                                <option value="umrah">Umrah</option>
+                            </select>
+                        </div>
+
+                        <div class="field">
+                            <label for="name">Tour name</label>
+                            <input
+                                id="name"
+                                name="name"
+                                type="text"
+                                minlength="2"
+                                maxlength="120"
+                                required
+                            />
+                        </div>
+
+                        <div class="field">
+                            <label for="region">Region</label>
+                            <input
+                                id="region"
+                                name="region"
+                                type="text"
+                                maxlength="120"
+                            />
+                        </div>
+
+                        <div class="field">
+                            <label for="duration">Duration</label>
+                            <input
+                                id="duration"
+                                name="duration"
+                                type="text"
+                                maxlength="80"
+                                placeholder="5 days / 4 nights"
+                            />
+                        </div>
+
+                        <div class="field">
+                            <label for="price">Price</label>
+                            <input
+                                id="price"
+                                name="price"
+                                type="number"
+                                min="0"
+                                step="1"
+                                inputmode="numeric"
+                            />
+                        </div>
+
+                        <div class="field full-width">
+                            <label for="image">Image path or URL</label>
+                            <input
+                                id="image"
+                                name="image"
+                                type="text"
+                                maxlength="500"
+                                placeholder="New folder/KashmirHD.png"
+                            />
+                        </div>
+
+                        <div class="field full-width">
+                            <label for="description">Description</label>
+                            <textarea
+                                id="description"
+                                name="description"
+                                minlength="5"
+                                maxlength="2000"
+                                required
+                            ></textarea>
+                        </div>
+
+                        <div class="field full-width">
+                            <label for="features">Features</label>
+                            <textarea
+                                id="features"
+                                name="features"
+                                placeholder="One feature per line"
+                            ></textarea>
+                            <p class="help-text">
+                                Optional. Each non-empty line becomes one feature.
+                            </p>
+                        </div>
+
+                        <div class="field">
+                            <label for="cta-label">Button label</label>
+                            <input
+                                id="cta-label"
+                                name="cta_label"
+                                type="text"
+                                maxlength="80"
+                                value="Explore Package"
+                            />
+                        </div>
+
+                        <div class="field">
+                            <label for="sort-order">Display order</label>
+                            <input
+                                id="sort-order"
+                                name="sort_order"
+                                type="number"
+                                min="0"
+                                step="1"
+                                value="0"
+                                inputmode="numeric"
+                            />
+                        </div>
+
+                        <label class="checkbox-field full-width" for="is-featured">
+                            <input
+                                id="is-featured"
+                                name="is_featured"
+                                type="checkbox"
+                            />
+                            Mark as a featured tour
+                        </label>
+                    </div>
+
+                    <div class="actions">
+                        <button type="submit">Create tour</button>
+                        <button type="reset">Clear tour details</button>
+                    </div>
+                    <p id="form-status" role="status" aria-live="polite"></p>
+                </form>
+            </section>
+        </main>
+
+        <script>
+            const form = document.querySelector("#tour-form");
+            const adminKeyInput = document.querySelector("#admin-key");
+            const statusMessage = document.querySelector("#form-status");
+            const submitButton = form.querySelector('button[type="submit"]');
+
+            function showStatus(message, state) {
+                statusMessage.textContent = message;
+                statusMessage.dataset.state = state;
+            }
+
+            function formatApiError(data) {
+                if (typeof data.detail === "string") {
+                    return data.detail;
+                }
+
+                if (Array.isArray(data.detail)) {
+                    return data.detail
+                        .map((item) => {
+                            const field = item.loc[item.loc.length - 1];
+                            return `${field}: ${item.msg}`;
+                        })
+                        .join("; ");
+                }
+
+                return "The request was rejected. Check the tour details and admin key.";
+            }
+
+            form.addEventListener("submit", async (event) => {
+                event.preventDefault();
+
+                if (!adminKeyInput.value.trim()) {
+                    adminKeyInput.focus();
+                    showStatus("Enter the admin API key before creating a tour.", "error");
+                    return;
+                }
+
+                if (!form.reportValidity()) {
+                    return;
+                }
+
+                const formData = new FormData(form);
+                const priceValue = formData.get("price");
+                const price = priceValue === "" ? null : Number(priceValue);
+                const sortOrder = Number(formData.get("sort_order"));
+
+                if (
+                    (price !== null && !Number.isSafeInteger(price)) ||
+                    !Number.isSafeInteger(sortOrder)
+                ) {
+                    showStatus("Price and display order must be whole numbers.", "error");
+                    return;
+                }
+
+                const tour = {
+                    slug: formData.get("slug").trim(),
+                    category: formData.get("category"),
+                    name: formData.get("name").trim(),
+                    region: formData.get("region").trim(),
+                    duration: formData.get("duration").trim(),
+                    price,
+                    image: formData.get("image").trim(),
+                    description: formData.get("description").trim(),
+                    features: formData
+                        .get("features")
+                        .split(/\r?\n/)
+                        .map((feature) => feature.trim())
+                        .filter(Boolean),
+                    cta_label: formData.get("cta_label").trim() || "Explore Package",
+                    is_featured: formData.has("is_featured"),
+                    sort_order: sortOrder,
+                };
+
+                submitButton.disabled = true;
+                showStatus("Creating tour...", "pending");
+
+                try {
+                    const response = await fetch("/api/tours", {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                            "X-Admin-Key": adminKeyInput.value,
+                        },
+                        body: JSON.stringify(tour),
+                    });
+                    const responseText = await response.text();
+                    let result = {};
+
+                    if (responseText) {
+                        try {
+                            result = JSON.parse(responseText);
+                        } catch {
+                            result = { detail: responseText };
+                        }
+                    }
+
+                    if (!response.ok) {
+                        throw new Error(formatApiError(result));
+                    }
+
+                    form.reset();
+                    showStatus(
+                        `Tour "${result.tour.name}" was created successfully.`,
+                        "success"
+                    );
+                } catch (error) {
+                    showStatus(
+                        error instanceof Error
+                            ? error.message
+                            : "The tour could not be created.",
+                        "error"
+                    );
+                } finally {
+                    submitButton.disabled = false;
+                }
+            });
+        </script>
+    </body>
+</html>
