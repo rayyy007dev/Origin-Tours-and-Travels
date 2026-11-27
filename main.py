@@ -1,17 +1,14 @@
-"""Standalone, reorganized copy of the ORIGIN API for comparison. (not anymore)
-
-This file is not imported by main.py and does not start the server or connect
-to PostgreSQL by itself.
-"""
 
 import os
 import secrets
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Annotated, Any, Literal
 
 import psycopg
 from fastapi import Depends, FastAPI, Header, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from psycopg import sql
 from psycopg.errors import UniqueViolation
@@ -23,9 +20,7 @@ TourCategory = Literal["domestic", "international", "umrah"]
 DatabaseConnection = Annotated[psycopg.Connection, Depends(get_db)]
 
 
-# ---------------------------------------------------------------------------
-# Request data
-# ---------------------------------------------------------------------------
+# Request models
 
 class ContactForm(BaseModel):
     name: str = Field(min_length=2, max_length=120)
@@ -102,77 +97,75 @@ class TourUpdate(BaseModel):
     sort_order: int | None = Field(default=None, ge=0)
 
 
-# ---------------------------------------------------------------------------
 # Shared database operations
-# ---------------------------------------------------------------------------
 
 def insert_row(
     connection: psycopg.Connection,
-    table: str,
+    table: Literal["tours", "destinations"],
     values: dict[str, Any],
 ) -> dict[str, Any] | None:
-    """Insert one row; callers decide when to commit the transaction."""
-    columns = list(values)
-    column_names = sql.SQL(", ").join(
-        sql.Identifier(column) for column in columns
-    )
-    placeholders = sql.SQL(", ").join(
-        sql.SQL("%s") for _ in columns
-    )
-    query = sql.SQL("INSERT INTO {} ({}) VALUES ({}) RETURNING *").format(
+    columns = tuple(values)
+
+    query = sql.SQL(
+        "INSERT INTO {} ({}) VALUES ({}) RETURNING *"
+    ).format(
         sql.Identifier(table),
-        column_names,
-        placeholders,
+        sql.SQL(", ").join(map(sql.Identifier, columns)),
+        sql.SQL(", ").join(sql.Placeholder() for _ in columns),
     )
 
     with connection.cursor() as cursor:
-        cursor.execute(query, tuple(values[column] for column in columns))
+        cursor.execute(query, tuple(values.values()))
         return cursor.fetchone()
 
 
 def update_row(
     connection: psycopg.Connection,
-    table: str,
+    table: Literal["tours", "destinations"],
     record_id: int,
     values: dict[str, Any],
 ) -> dict[str, Any] | None:
-    """Update provided columns; callers handle missing rows and commit."""
     assignments = sql.SQL(", ").join(
-        sql.SQL("{} = %s").format(sql.Identifier(column))
+        sql.SQL("{} = {}").format(
+            sql.Identifier(column),
+            sql.Placeholder(),
+        )
         for column in values
     )
+
     query = sql.SQL(
-        "UPDATE {} SET {}, updated_at = NOW() "
-        "WHERE id = %s RETURNING *"
-    ).format(sql.Identifier(table), assignments)
+        "UPDATE {} SET {}, updated_at = NOW() WHERE id = {} RETURNING *"
+    ).format(
+        sql.Identifier(table),
+        assignments,
+        sql.Placeholder(),
+    )
 
     with connection.cursor() as cursor:
         cursor.execute(query, (*values.values(), record_id))
         return cursor.fetchone()
 
 
-# ---------------------------------------------------------------------------
-# Authentication and application setup
-# ---------------------------------------------------------------------------
+# Application setup
 
 def require_admin_key(
-    x_admin_key: Annotated[str | None, Header()] = None,
+    x_admin_key: Annotated[str | None, Header(alias="X-Admin-Key")] = None,
 ) -> None:
-    """Protect private enquiry data and all write endpoints."""
     expected_key = os.getenv("ADMIN_API_KEY")
+
     if not expected_key:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Admin API is disabled. Set ADMIN_API_KEY in the .env file.",
+            detail="Admin API is disabled",
         )
 
     if not x_admin_key or not secrets.compare_digest(
-        x_admin_key.encode("utf-8"),
-        expected_key.encode("utf-8"),
+        x_admin_key.encode(),
+        expected_key.encode(),
     ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="A valid X-Admin-Key header is required.",
+            detail="A valid X-Admin-Key header is required",
         )
 
 
@@ -203,6 +196,8 @@ app.add_middleware(
 )
 
 
+# Health
+
 @app.get("/api", tags=["Health"])
 def api_home():
     return {"message": "ORIGIN API is running"}
@@ -214,9 +209,7 @@ def database_health(connection: DatabaseConnection):
     return {"status": "ok", "database": "connected"}
 
 
-# ---------------------------------------------------------------------------
-# Contact enquiries
-# ---------------------------------------------------------------------------
+# Contact
 
 @app.post(
     "/api/contact",
@@ -236,12 +229,12 @@ def submit_contact_message(
             """,
             (data.name, str(data.email), data.phone, data.subject, data.message),
         )
-        saved_message = cursor.fetchone()
+        contact = cursor.fetchone()
 
     connection.commit()
     return {
         "message": "Your message has been received",
-        "contact": saved_message,
+        "contact": contact,
     }
 
 
@@ -259,8 +252,9 @@ def get_contact_messages(connection: DatabaseConnection):
             ORDER BY created_at DESC, id DESC
             """
         )
-        messages = cursor.fetchall()
-    return {"contacts": messages}
+        contacts = cursor.fetchall()
+
+    return {"contacts": contacts}
 
 
 @app.delete(
@@ -277,41 +271,38 @@ def delete_contact_message(
             "DELETE FROM contact_messages WHERE id = %s RETURNING id",
             (contact_id,),
         )
-        deleted_message = cursor.fetchone()
+        deleted = cursor.fetchone()
 
-    if deleted_message is None:
-        raise HTTPException(status_code=404, detail="Contact message not found")
+    if deleted is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Contact message not found",
+        )
 
     connection.commit()
-    return {"message": "Contact message deleted", "id": deleted_message["id"]}
+    return {"message": "Contact message deleted", "id": deleted["id"]}
 
 
-# ---------------------------------------------------------------------------
 # Tours
-# ---------------------------------------------------------------------------
 
 @app.get("/api/tours", tags=["Tours"])
 def get_tours(
     connection: DatabaseConnection,
     category: TourCategory | None = None,
 ):
-    query = """
-        SELECT id, slug, category, name, region, duration, price,
-               image, description, features, cta_label, is_featured,
-               sort_order
-        FROM tours
-    """
-    parameters: tuple[str, ...] = ()
+    query = "SELECT * FROM tours"
 
-    if category is None:
-        query += " ORDER BY category, sort_order, id"
-    else:
+    if category is not None:
         query += " WHERE category = %s ORDER BY sort_order, id"
         parameters = (category,)
+    else:
+        query += " ORDER BY category, sort_order, id"
+        parameters = ()
 
     with connection.cursor() as cursor:
         cursor.execute(query, parameters)
         tours = cursor.fetchall()
+
     return {"tours": tours}
 
 
@@ -323,16 +314,20 @@ def get_tours(
 )
 def create_tour(tour: TourCreate, connection: DatabaseConnection):
     try:
-        created_tour = insert_row(connection, "tours", tour.model_dump())
+        created = insert_row(
+            connection,
+            "tours",
+            tour.model_dump(),
+        )
         connection.commit()
-    except UniqueViolation:
+    except UniqueViolation as exc:
         connection.rollback()
         raise HTTPException(
-            status_code=409,
+            status_code=status.HTTP_409_CONFLICT,
             detail="A tour with this slug already exists",
-        )
+        ) from exc
 
-    return {"message": "Tour created", "tour": created_tour}
+    return {"message": "Tour created", "tour": created}
 
 
 @app.put(
@@ -346,22 +341,31 @@ def update_tour(
     connection: DatabaseConnection,
 ):
     values = updates.model_dump(exclude_unset=True, exclude_none=True)
-    if not values:
-        raise HTTPException(status_code=400, detail="No updates were provided")
 
-    try:
-        updated_tour = update_row(connection, "tours", tour_id, values)
-        if updated_tour is None:
-            raise HTTPException(status_code=404, detail="Tour not found")
-        connection.commit()
-    except UniqueViolation:
-        connection.rollback()
+    if not values:
         raise HTTPException(
-            status_code=409,
-            detail="A tour with this slug already exists",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No updates were provided",
         )
 
-    return {"message": "Tour updated", "tour": updated_tour}
+    try:
+        updated = update_row(connection, "tours", tour_id, values)
+
+        if updated is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Tour not found",
+            )
+
+        connection.commit()
+    except UniqueViolation as exc:
+        connection.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A tour with this slug already exists",
+        ) from exc
+
+    return {"message": "Tour updated", "tour": updated}
 
 
 @app.delete(
@@ -370,35 +374,32 @@ def update_tour(
     dependencies=[Depends(require_admin_key)],
 )
 def delete_tour(tour_id: int, connection: DatabaseConnection):
-    with connection.cursor() as cursor:
-        cursor.execute(
-            "DELETE FROM tours WHERE id = %s RETURNING id, name",
-            (tour_id,),
-        )
-        deleted_tour = cursor.fetchone()
+    deleted = connection.execute(
+        "DELETE FROM tours WHERE id = %s RETURNING id, name",
+        (tour_id,),
+    ).fetchone()
 
-    if deleted_tour is None:
-        raise HTTPException(status_code=404, detail="Tour not found")
+    if deleted is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tour not found",
+        )
 
     connection.commit()
-    return {"message": "Tour deleted", "tour": deleted_tour}
+    return {"message": "Tour deleted", "tour": deleted}
 
 
-# ---------------------------------------------------------------------------
 # Destinations
-# ---------------------------------------------------------------------------
 
 @app.get("/api/destinations", tags=["Destinations"])
 def get_destinations(connection: DatabaseConnection):
-    with connection.cursor() as cursor:
-        cursor.execute(
-            """
-            SELECT id, name, country, duration, price, image, description, link
-            FROM destinations
-            ORDER BY id
-            """
-        )
-        destinations = cursor.fetchall()
+    destinations = connection.execute(
+        """
+        SELECT id, name, country, duration, price, image, description, link
+        FROM destinations
+        ORDER BY id
+        """
+    ).fetchall()
     return {"destinations": destinations}
 
 
@@ -408,17 +409,26 @@ def get_destinations(connection: DatabaseConnection):
     tags=["Destinations"],
     dependencies=[Depends(require_admin_key)],
 )
-def create_destination(
-    destination: DestinationCreate,
-    connection: DatabaseConnection,
-):
-    created_destination = insert_row(
-        connection,
-        "destinations",
-        destination.model_dump(),
-    )
+def create_destination(destination: DestinationCreate, connection: DatabaseConnection):
+    created = connection.execute(
+        """
+        INSERT INTO destinations (name, country, duration, price, image, description, link)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        RETURNING *
+        """,
+        (
+            destination.name,
+            destination.country,
+            destination.duration,
+            destination.price,
+            destination.image,
+            destination.description,
+            destination.link,
+        ),
+    ).fetchone()
     connection.commit()
-    return {"message": "Destination created", "destination": created_destination}
+
+    return {"message": "Destination created", "destination": created}
 
 
 @app.put(
@@ -432,26 +442,32 @@ def update_destination(
     connection: DatabaseConnection,
 ):
     values = updates.model_dump(exclude_unset=True, exclude_none=True)
+
     if not values:
         raise HTTPException(
-            status_code=400,
-            detail="No valid updates were provided",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No updates were provided",
         )
 
-    updated_destination = update_row(
-        connection,
-        "destinations",
-        destination_id,
-        values,
+    assignments = sql.SQL(", ").join(
+        sql.SQL("{} = %s").format(sql.Identifier(field)) for field in values
     )
-    if updated_destination is None:
-        raise HTTPException(status_code=404, detail="Destination not found")
+    query = sql.SQL(
+        "UPDATE destinations SET {}, updated_at = NOW() WHERE id = %s RETURNING *"
+    ).format(assignments)
+    updated = connection.execute(
+        query,
+        (*values.values(), destination_id),
+    ).fetchone()
+
+    if updated is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Destination not found",
+        )
 
     connection.commit()
-    return {
-        "message": "Destination updated",
-        "destination": updated_destination,
-    }
+    return {"message": "Destination updated", "destination": updated}
 
 
 @app.delete(
@@ -459,27 +475,23 @@ def update_destination(
     tags=["Destinations"],
     dependencies=[Depends(require_admin_key)],
 )
-def delete_destination(
-    destination_id: int,
-    connection: DatabaseConnection,
-):
-    with connection.cursor() as cursor:
-        cursor.execute(
-            "DELETE FROM destinations WHERE id = %s RETURNING id, name",
-            (destination_id,),
-        )
-        deleted_destination = cursor.fetchone()
+def delete_destination(destination_id: int, connection: DatabaseConnection):
+    deleted = connection.execute(
+        "DELETE FROM destinations WHERE id = %s RETURNING id, name",
+        (destination_id,),
+    ).fetchone()
 
-    if deleted_destination is None:
-        raise HTTPException(status_code=404, detail="Destination not found")
+    if deleted is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Destination not found",
+        )
 
     connection.commit()
-    return {"message": "Destination deleted", "destination": deleted_destination}
+    return {"message": "Destination deleted", "destination": deleted}
 
 
-# ---------------------------------------------------------------------------
 # Services
-# ---------------------------------------------------------------------------
 
 @app.get("/api/services", tags=["Services"])
 def get_services():
@@ -493,4 +505,10 @@ def get_services():
     }
 
 
-app.frontend("/", directory="public", fallback=None)
+# Frontend
+
+app.mount(
+    "/",
+    StaticFiles(directory=Path(__file__).resolve().parent / "public", html=True),
+    name="frontend",
+)

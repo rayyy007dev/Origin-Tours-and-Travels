@@ -46,6 +46,49 @@ def get_db() -> Generator[psycopg.Connection, None, None]:
         connection.close()
 
 
+def _ensure_tour_sort_order_constraint(connection: psycopg.Connection) -> None:
+    constraint_name = "tours_sort_order_nonnegative"
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conname = %s
+                  AND conrelid = 'public.tours'::regclass
+            ) AS constraint_exists
+            """,
+            (constraint_name,),
+        )
+        if cursor.fetchone()["constraint_exists"]:
+            return
+
+        cursor.execute(
+            """
+            SELECT id, sort_order
+            FROM public.tours
+            WHERE sort_order < 0
+            LIMIT 1
+            """
+        )
+        invalid_tour = cursor.fetchone()
+        if invalid_tour is not None:
+            raise RuntimeError(
+                "Cannot add the non-negative tour sort_order constraint: "
+                f"tour id {invalid_tour['id']} has sort_order "
+                f"{invalid_tour['sort_order']}. Correct the value and restart."
+            )
+
+        cursor.execute(
+            """
+            ALTER TABLE public.tours
+            ADD CONSTRAINT tours_sort_order_nonnegative
+            CHECK (sort_order >= 0)
+            """
+        )
+
+
 def initialize_database() -> None:
     """Create the schema and insert starter content without overwriting data."""
     from seed_data import seed_default_data
@@ -59,4 +102,5 @@ def initialize_database() -> None:
             for statement in schema_sql.split(";"):
                 if statement.strip():
                     cursor.execute(statement)
+        _ensure_tour_sort_order_constraint(connection)
         seed_default_data(connection)

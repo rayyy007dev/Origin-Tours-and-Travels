@@ -8,6 +8,7 @@ This is the ORIGIN website codebase updated to use PostgreSQL for tours, destina
 - Replaced the one global PostgreSQL connection with one connection per API request.
 - Database setup runs when FastAPI starts, not when `main.py` is imported.
 - Added an idempotent `schema.sql` and starter-data seeding. Existing tour rows are not overwritten; sample destinations are inserted only when the destinations table is empty.
+- Tour display order is constrained to non-negative values in PostgreSQL. If an existing tour has a negative value, startup reports it rather than changing or deleting that row.
 - Added protected create/update/delete endpoints for tours and destinations.
 - Protected contact-message listing and deletion. Public visitors can submit a message but cannot read other people's messages.
 - Added an admin API key requirement to tour/destination management and private enquiry retrieval. The public contact-form submission remains unauthenticated by design.
